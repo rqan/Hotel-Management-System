@@ -1,0 +1,268 @@
+<?php
+
+namespace App\Controllers;
+
+use App\Controllers\BaseController;
+use App\Models\ReservationModel;
+use App\Models\RoomModel;
+use App\Models\RoomTypeModel;
+use App\Models\CustomerModel;
+use CodeIgniter\I18n\Time;
+
+class ReservationController extends BaseController
+{
+    protected ReservationModel $reservationModel;
+    protected RoomModel $roomModel;
+    protected RoomTypeModel $roomTypeModel;
+    protected CustomerModel $customerModel;
+
+    public function __construct()
+    {
+        $this->reservationModel = new ReservationModel();
+        $this->roomModel        = new RoomModel();
+        $this->roomTypeModel    = new RoomTypeModel();
+        $this->customerModel    = new CustomerModel();
+    }
+
+    // ==========================================================
+    // STAFF: List semua reservasi
+    // ==========================================================
+
+    public function index()
+    {
+        return view('reservation/index', [
+            'title'      => 'Reservasi',
+            'customers'  => $this->customerModel->orderBy('name', 'ASC')->findAll(),
+            'roomTypes'  => $this->roomTypeModel->getAllActive(),
+        ]);
+    }
+
+    public function list()
+    {
+        return $this->response->setJSON(['data' => $this->reservationModel->getAllWithDetail()]);
+    }
+
+    /**
+     * Ambil kamar available untuk tipe & tanggal tertentu (dipanggil AJAX
+     * saat staff memilih tipe kamar di form, untuk menampilkan pilihan kamar).
+     */
+    public function availableRooms()
+    {
+        $roomTypeId = $this->request->getGet('room_type_id');
+        $checkIn    = $this->request->getGet('check_in_date');
+        $checkOut   = $this->request->getGet('check_out_date');
+
+        if (!$roomTypeId || !$checkIn || !$checkOut) {
+            return $this->response->setStatusCode(422)->setJSON(['message' => 'Parameter tidak lengkap.']);
+        }
+
+        $rooms = $this->roomModel->where('room_type_id', $roomTypeId)
+            ->where('status !=', 'maintenance')
+            ->findAll();
+
+        $available = array_filter($rooms, function ($room) use ($checkIn, $checkOut) {
+            return !$this->reservationModel->isRoomBooked((int) $room['id'], $checkIn, $checkOut);
+        });
+
+        return $this->response->setJSON(['data' => array_values($available)]);
+    }
+
+    // ==========================================================
+    // STAFF: Create (bebas pilih customer & kamar)
+    // ==========================================================
+
+    public function create()
+    {
+        $rules = [
+            'customer_id'    => 'required|integer|is_not_unique[customers.id]',
+            'room_id'        => 'required|integer|is_not_unique[rooms.id]',
+            'check_in_date'  => 'required|valid_date',
+            'check_out_date' => 'required|valid_date',
+            'guests'         => 'required|integer|greater_than[0]',
+        ];
+
+        if (!$this->validate($rules)) {
+            return $this->response->setStatusCode(422)->setJSON(['errors' => $this->validator->getErrors()]);
+        }
+
+        $checkIn  = $this->request->getPost('check_in_date');
+        $checkOut = $this->request->getPost('check_out_date');
+        $roomId   = (int) $this->request->getPost('room_id');
+
+        if (strtotime($checkOut) <= strtotime($checkIn)) {
+            return $this->response->setStatusCode(422)->setJSON([
+                'errors' => ['check_out_date' => 'Tanggal check-out harus setelah check-in.'],
+            ]);
+        }
+
+        if ($this->reservationModel->isRoomBooked($roomId, $checkIn, $checkOut)) {
+            return $this->response->setStatusCode(409)->setJSON([
+                'message' => 'Kamar sudah dibooking pada rentang tanggal tersebut.',
+            ]);
+        }
+
+        $nights = (strtotime($checkOut) - strtotime($checkIn)) / 86400;
+
+        $reservationId = $this->reservationModel->insert([
+            'booking_number' => $this->reservationModel->generateBookingNumber(),
+            'customer_id'    => $this->request->getPost('customer_id'),
+            'room_id'        => $roomId,
+            'booking_date'   => date('Y-m-d'),
+            'check_in_date'  => $checkIn,
+            'check_out_date' => $checkOut,
+            'nights'         => $nights,
+            'guests'         => $this->request->getPost('guests'),
+            'status'         => $this->request->getPost('status') ?: 'pending',
+            'notes'          => $this->request->getPost('notes'),
+            'created_by'     => session()->get('userId'),
+        ]);
+
+        // Set status kamar jadi 'reserved' jika reservasi langsung confirmed
+        $status = $this->request->getPost('status') ?: 'pending';
+        if ($status === 'confirmed') {
+            $this->roomModel->update($roomId, ['status' => 'reserved']);
+        }
+
+        $this->logActivity('reservation', 'create', $reservationId, 'Membuat reservasi baru (staff)');
+
+        return $this->response->setJSON(['success' => true, 'message' => 'Reservasi berhasil dibuat.']);
+    }
+
+    // ==========================================================
+    // CUSTOMER: Self-booking (hanya pilih tipe kamar, bukan nomor kamar)
+    // ==========================================================
+
+    public function selfBookingForm()
+    {
+        return view('reservation/create', [
+            'title'     => 'Buat Reservasi',
+            'roomTypes' => $this->roomTypeModel->getAllActive(),
+        ]);
+    }
+
+    public function selfBooking()
+    {
+        $userId = session()->get('userId');
+        $customer = $this->customerModel->findByUserId($userId);
+
+        // Guard: user role customer tapi belum punya baris di tabel customers
+        // (kasus ini seharusnya jarang terjadi jika registrasi customer sudah benar,
+        // tapi tetap ditangani agar tidak fatal error).
+        if (!$customer) {
+            return $this->response->setStatusCode(422)->setJSON([
+                'message' => 'Data profil customer Anda belum lengkap. Silakan hubungi resepsionis.',
+            ]);
+        }
+
+        $rules = [
+            'room_type_id'   => 'required|integer|is_not_unique[room_types.id]',
+            'check_in_date'  => 'required|valid_date',
+            'check_out_date' => 'required|valid_date',
+            'guests'         => 'required|integer|greater_than[0]',
+        ];
+
+        if (!$this->validate($rules)) {
+            return $this->response->setStatusCode(422)->setJSON(['errors' => $this->validator->getErrors()]);
+        }
+
+        $checkIn  = $this->request->getPost('check_in_date');
+        $checkOut = $this->request->getPost('check_out_date');
+
+        if (strtotime($checkIn) < strtotime(date('Y-m-d'))) {
+            return $this->response->setStatusCode(422)->setJSON([
+                'errors' => ['check_in_date' => 'Tanggal check-in tidak boleh sebelum hari ini.'],
+            ]);
+        }
+
+        if (strtotime($checkOut) <= strtotime($checkIn)) {
+            return $this->response->setStatusCode(422)->setJSON([
+                'errors' => ['check_out_date' => 'Tanggal check-out harus setelah check-in.'],
+            ]);
+        }
+
+        $roomTypeId = (int) $this->request->getPost('room_type_id');
+        $room = $this->reservationModel->findAvailableRoomByType($roomTypeId, $checkIn, $checkOut);
+
+        if (!$room) {
+            return $this->response->setStatusCode(409)->setJSON([
+                'message' => 'Maaf, tidak ada kamar tersedia untuk tipe dan tanggal yang dipilih.',
+            ]);
+        }
+
+        $nights = (strtotime($checkOut) - strtotime($checkIn)) / 86400;
+
+        // customer_id & status TIDAK diambil dari input — dipaksa dari session
+        // dan default 'pending', mencegah manipulasi client-side.
+        $reservationId = $this->reservationModel->insert([
+            'booking_number' => $this->reservationModel->generateBookingNumber(),
+            'customer_id'    => $customer['id'],
+            'room_id'        => $room['id'],
+            'booking_date'   => date('Y-m-d'),
+            'check_in_date'  => $checkIn,
+            'check_out_date' => $checkOut,
+            'nights'         => $nights,
+            'guests'         => $this->request->getPost('guests'),
+            'status'         => 'pending',
+            'notes'          => $this->request->getPost('notes'),
+            'created_by'     => $userId,
+        ]);
+
+        $this->logActivity('reservation', 'create', $reservationId, 'Customer melakukan self-booking');
+
+        return $this->response->setJSON([
+            'success' => true,
+            'message' => 'Reservasi berhasil dibuat! Menunggu konfirmasi dari staff.',
+        ]);
+    }
+
+    // ==========================================================
+    // Update status (staff only — confirm/cancel dari list)
+    // ==========================================================
+
+    public function updateStatus($id)
+    {
+        $reservation = $this->reservationModel->find($id);
+        if (!$reservation) {
+            return $this->response->setStatusCode(404)->setJSON(['message' => 'Reservasi tidak ditemukan.']);
+        }
+
+        $newStatus = $this->request->getPost('status');
+        $allowedStatuses = ['pending', 'confirmed', 'cancelled', 'no_show'];
+
+        // Sengaja TIDAK mengizinkan set manual ke 'checked_in'/'checked_out' di sini —
+        // dua status itu hanya boleh diset lewat proses Check In/Out (Tahap 7 & 8),
+        // karena harus disertai efek samping (ubah status kamar, hitung biaya, dsb).
+        if (!in_array($newStatus, $allowedStatuses, true)) {
+            return $this->response->setStatusCode(422)->setJSON([
+                'message' => 'Status tidak valid untuk diubah manual dari sini.',
+            ]);
+        }
+
+        $this->reservationModel->update($id, ['status' => $newStatus]);
+
+        // Sinkronkan status kamar mengikuti status reservasi
+        if ($newStatus === 'confirmed') {
+            $this->roomModel->update($reservation['room_id'], ['status' => 'reserved']);
+        } elseif (in_array($newStatus, ['cancelled', 'no_show'], true)) {
+            $this->roomModel->update($reservation['room_id'], ['status' => 'available']);
+        }
+
+        $this->logActivity('reservation', 'update_status', (int) $id, "Mengubah status reservasi menjadi {$newStatus}");
+
+        return $this->response->setJSON(['success' => true, 'message' => 'Status reservasi berhasil diperbarui.']);
+    }
+
+    private function logActivity(string $module, string $action, ?int $referenceId, string $description): void
+    {
+        $this->reservationModel->db->table('activity_logs')->insert([
+            'user_id'      => session()->get('userId'),
+            'module'       => $module,
+            'action'       => $action,
+            'reference_id' => $referenceId,
+            'description'  => $description,
+            'ip_address'   => $this->request->getIPAddress(),
+            'user_agent'   => (string) $this->request->getUserAgent(),
+            'created_at'   => date('Y-m-d H:i:s'),
+        ]);
+    }
+}
