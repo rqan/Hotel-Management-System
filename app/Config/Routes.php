@@ -109,6 +109,9 @@ $routes->group('master', ['filter' => 'auth:super_admin,admin'], function ($rout
     });
 
 // Modul laporan — hanya manager & admin ke atas
-$routes->group('reports', ['filter' => 'auth:super_admin,admin,manager'], function ($routes) {
-    // reports akan didaftarkan di sini mulai Tahap 11
+    $routes->group('reports', ['filter' => 'auth:super_admin,admin,manager'], function ($routes) {
+        $routes->get('/', 'ReportController::index');
+        $routes->get('data/(:segment)', 'ReportController::data/$1');
+        $routes->get('export-excel/(:segment)', 'ReportController::exportExcel/$1');
+        $routes->get('export-pdf/(:segment)', 'ReportController::exportPdf/$1');
 });
