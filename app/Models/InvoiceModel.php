@@ -33,4 +33,41 @@ class InvoiceModel extends Model
     {
         return $this->where('reservation_id', $reservationId)->first();
     }
+
+    /**
+     * Hitung ulang subtotal, pajak, service charge, dan total invoice
+     * berdasarkan SUM seluruh invoice_items terkini.
+     * Dipanggil setiap kali item ditambah/dihapus, agar total selalu sinkron
+     * dengan rincian item — mencegah invoice yang "total"-nya tidak cocok
+     * dengan penjumlahan barisnya.
+     */
+    public function recalculateTotals(int $invoiceId): array
+    {
+        $itemModel    = new InvoiceItemModel();
+        $settingModel = new SettingModel();
+
+        $subtotal = $itemModel->sumByInvoiceId($invoiceId);
+        $settings = $settingModel->getSettings();
+
+        $taxRate = (float) ($settings['tax_percentage'] ?? 0);
+        $scRate  = (float) ($settings['service_charge_percentage'] ?? 0);
+
+        $taxAmount = round($subtotal * ($taxRate / 100));
+        $scAmount  = round($subtotal * ($scRate / 100));
+        $total     = $subtotal + $taxAmount + $scAmount;
+
+        $this->update($invoiceId, [
+            'subtotal'              => $subtotal,
+            'tax_amount'            => $taxAmount,
+            'service_charge_amount' => $scAmount,
+            'total_amount'          => $total,
+        ]);
+
+        return [
+            'subtotal'              => $subtotal,
+            'tax_amount'            => $taxAmount,
+            'service_charge_amount' => $scAmount,
+            'total_amount'          => $total,
+        ];
+    }
 }

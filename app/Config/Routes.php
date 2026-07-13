@@ -86,6 +86,21 @@ $routes->group('master', ['filter' => 'auth:super_admin,admin'], function ($rout
         $routes->get('preview/(:num)', 'CheckOutController::preview/$1');
         $routes->post('process/(:num)', 'CheckOutController::process/$1');
     });
+    $routes->group('payment', ['filter' => 'auth:super_admin,admin,receptionist,manager'], function ($routes) {
+    $routes->get('/', 'PaymentController::index');
+    $routes->get('unpaid-list', 'PaymentController::unpaidList');
+    $routes->get('detail/(:num)', 'PaymentController::detail/$1');
+    $routes->post('create', 'PaymentController::create');
+    });
+    $routes->group('invoice', ['filter' => 'auth:super_admin,admin,receptionist,manager'], function ($routes) {
+        $routes->get('/', 'InvoiceController::index');
+        $routes->get('list', 'InvoiceController::list');
+        $routes->get('view/(:num)', 'InvoiceController::view/$1');
+        $routes->get('download/(:num)', 'InvoiceController::downloadPdf/$1');
+        $routes->get('items/(:num)', 'InvoiceController::items/$1');
+        $routes->post('items/add', 'InvoiceController::addItem');
+        $routes->post('items/delete/(:num)', 'InvoiceController::deleteItem/$1');
+    });
 
     // Self-booking khusus customer
     $routes->group('my-reservations', ['filter' => 'auth:customer'], function ($routes) {
