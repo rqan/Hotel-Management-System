@@ -40,7 +40,12 @@
                         <input type="number" class="form-control" name="guests" min="1" value="1" required>
                         <div class="invalid-feedback" id="err_guests"></div>
                     </div>
-
+                    <div class="mb-3">
+                        <label class="form-label">Kode Referal (opsional)</label>
+                        <input type="text" class="form-control" name="referral_code" placeholder="mis. DEWA" style="text-transform: uppercase;">
+                        <div class="invalid-feedback" id="err_referral_code"></div>
+                        <small class="text-muted">Punya kode referal? Dapatkan potongan Rp 50.000 (diterapkan saat check-out).</small>
+                    </div>
                     <div class="mb-3">
                         <label class="form-label">Catatan (opsional)</label>
                         <textarea class="form-control" name="notes" rows="2" placeholder="Permintaan khusus, dsb."></textarea>

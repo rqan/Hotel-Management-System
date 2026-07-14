@@ -18,7 +18,7 @@ class ReservationModel extends Model
     protected $allowedFields = [
         'booking_number', 'customer_id', 'room_id', 'booking_date',
         'check_in_date', 'check_out_date', 'nights', 'guests',
-        'status', 'notes', 'created_by',
+        'status', 'notes', 'referral_code', 'discount_amount', 'created_by',
     ];
 
     protected $validationRules = [
@@ -67,7 +67,10 @@ class ReservationModel extends Model
 
     /**
      * Cari 1 kamar available dari tipe tertentu untuk rentang tanggal yang diminta.
-     * Dipakai untuk alur self-booking customer (customer hanya pilih tipe, bukan nomor kamar).
+     * REVISI: menggunakan FOR UPDATE untuk mengunci baris kamar yang dipertimbangkan,
+     * mencegah race condition ketika 2 customer submit booking untuk tipe kamar
+     * yang sama secara nyaris bersamaan. WAJIB dipanggil di dalam database
+     * transaction (lihat ReservationController::selfBooking() revisi).
      */
     public function findAvailableRoomByType(int $roomTypeId, string $checkIn, string $checkOut): ?array
     {
@@ -78,6 +81,12 @@ class ReservationModel extends Model
             ->getResultArray();
 
         foreach ($rooms as $room) {
+            // Lock baris kamar ini selama transaksi berjalan — request lain yang
+            // mencoba membaca/mengunci baris yang sama akan menunggu sampai
+            // transaksi ini selesai (commit/rollback), mencegah 2 booking
+            // lolos cek availability untuk kamar yang sama secara bersamaan.
+            $this->db->query('SELECT id FROM rooms WHERE id = ? FOR UPDATE', [$room['id']]);
+
             if (!$this->isRoomBooked((int) $room['id'], $checkIn, $checkOut)) {
                 return $room;
             }

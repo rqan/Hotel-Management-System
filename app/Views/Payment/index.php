@@ -55,19 +55,29 @@
                 <form id="pmAddItemForm" class="row g-2 mb-4 align-items-end">
                     <input type="hidden" id="pmItemInvoiceId" name="invoice_id">
                     <div class="col-md-4">
-                        <label class="form-label small">Deskripsi</label>
-                        <input type="text" class="form-control form-control-sm" name="description" placeholder="mis. Extra Pillow" required>
+                        <label class="form-label small">Item</label>
+                        <select class="form-select form-select-sm" id="pmItemSelect" name="description" required>
+                            <option value="">-- Pilih Item --</option>
+                            <?php foreach ($additionalItems as $name => $price): ?>
+                                <option value="<?= esc($name) ?>" data-price="<?= $price ?>"><?= esc($name) ?> (Rp <?= number_format($price, 0, ',', '.') ?>)</option>
+                            <?php endforeach; ?>
+                            <option value="__custom__">Lainnya (custom)</option>
+                        </select>
+                    </div>
+                    <div class="col-md-3 d-none" id="pmCustomDescWrap">
+                        <label class="form-label small">Deskripsi Custom</label>
+                        <input type="text" class="form-control form-control-sm" id="pmCustomDesc" placeholder="mis. Kerusakan barang">
                     </div>
                     <div class="col-md-2">
                         <label class="form-label small">Qty</label>
-                        <input type="number" class="form-control form-control-sm" name="quantity" value="1" min="1" required>
+                        <input type="number" class="form-control form-control-sm" name="quantity" id="pmQty" value="1" min="1" required>
                     </div>
                     <div class="col-md-3">
                         <label class="form-label small">Harga Satuan</label>
-                        <input type="number" class="form-control form-control-sm" name="unit_price" min="0" step="1000" required>
+                        <input type="number" class="form-control form-control-sm" name="unit_price" id="pmUnitPrice" min="0" step="1000" required>
                     </div>
-                    <div class="col-md-3">
-                        <button type="submit" class="btn btn-sm btn-outline-primary w-100" id="pmAddItemBtn">
+                    <div class="col-12 mt-2">
+                        <button type="submit" class="btn btn-sm btn-outline-primary" id="pmAddItemBtn">
                             <i class="bi bi-plus-lg"></i> Tambah Item
                         </button>
                     </div>
@@ -98,7 +108,8 @@
                         </div>
                         <div class="col-md-4">
                             <label class="form-label">Jumlah</label>
-                            <input type="number" class="form-control" name="amount" id="pmAmountInput" min="1" step="1000" required>
+                            <input type="number" class="form-control" name="amount" id="pmAmountInput" min="1" step="1000" required readonly>
+                            <small class="text-muted">Otomatis mengikuti sisa tagihan.</small>
                             <div class="invalid-feedback" id="err_amount"></div>
                         </div>
                         <div class="col-md-4">
@@ -112,6 +123,9 @@
                     </div>
                     <button type="submit" class="btn btn-primary mt-3" id="pmSubmitBtn">
                         <i class="bi bi-cash-coin"></i> Simpan Pembayaran
+                    </button>
+                    <button type="button" class="btn btn-outline-secondary mt-3 ms-2" id="pmPartialBtn" onclick="enablePartialAmount()">
+                        <i class="bi bi-pencil"></i> Bayar Sebagian
                     </button>
                 </form>
             </div>
@@ -159,6 +173,13 @@ const table = $('#invoiceTable').DataTable({
     ]
 });
 
+function enablePartialAmount() {
+    const input = document.getElementById('pmAmountInput');
+    input.removeAttribute('readonly');
+    input.focus();
+    input.select();
+}
+
 async function loadInvoiceItems(invoiceId) {
     const res = await fetch(`${baseUrl}invoice/items/${invoiceId}`);
     const result = await res.json();
@@ -199,8 +220,11 @@ async function refreshInvoiceModal(invoiceId) {
     document.getElementById('pmTotalAmount').innerText = formatRupiah(result.invoice.total_amount);
     document.getElementById('pmTotalPaid').innerText = formatRupiah(result.total_paid);
     document.getElementById('pmRemaining').innerText = formatRupiah(result.remaining);
-    document.getElementById('pmAmountInput').max = result.remaining;
-    document.getElementById('pmAmountInput').value = result.remaining;
+
+    const amountInput = document.getElementById('pmAmountInput');
+    amountInput.max = result.remaining;
+    amountInput.value = result.remaining;
+    amountInput.setAttribute('readonly', 'readonly');
 
     await loadInvoiceItems(invoiceId);
 }
@@ -221,8 +245,11 @@ async function openPaymentModal(invoiceId) {
     document.getElementById('pmTotalAmount').innerText = formatRupiah(result.invoice.total_amount);
     document.getElementById('pmTotalPaid').innerText = formatRupiah(result.total_paid);
     document.getElementById('pmRemaining').innerText = formatRupiah(result.remaining);
-    document.getElementById('pmAmountInput').max = result.remaining;
-    document.getElementById('pmAmountInput').value = result.remaining;
+
+    const amountInput = document.getElementById('pmAmountInput');
+    amountInput.max = result.remaining;
+    amountInput.value = result.remaining;
+    amountInput.setAttribute('readonly', 'readonly');
 
     await loadInvoiceItems(invoiceId);
 
@@ -246,10 +273,38 @@ async function openPaymentModal(invoiceId) {
     new bootstrap.Modal(document.getElementById('paymentModal')).show();
 }
 
+document.getElementById('pmItemSelect').addEventListener('change', function () {
+    const selected = this.options[this.selectedIndex];
+    const customWrap = document.getElementById('pmCustomDescWrap');
+    const unitPriceInput = document.getElementById('pmUnitPrice');
+
+    if (this.value === '__custom__') {
+        customWrap.classList.remove('d-none');
+        document.getElementById('pmCustomDesc').setAttribute('required', 'required');
+        unitPriceInput.value = '';
+        unitPriceInput.removeAttribute('readonly');
+    } else {
+        customWrap.classList.add('d-none');
+        document.getElementById('pmCustomDesc').removeAttribute('required');
+        unitPriceInput.value = selected.dataset.price || '';
+        unitPriceInput.setAttribute('readonly', 'readonly');
+    }
+});
+
 document.getElementById('pmAddItemForm').addEventListener('submit', async function (e) {
     e.preventDefault();
 
     const formData = new FormData(this);
+
+    if (formData.get('description') === '__custom__') {
+        const customDesc = document.getElementById('pmCustomDesc').value.trim();
+        if (!customDesc) {
+            Swal.fire('Gagal', 'Deskripsi custom wajib diisi.', 'error');
+            return;
+        }
+        formData.set('description', customDesc);
+    }
+
     formData.append(csrfName, csrfHash);
 
     const res = await fetch(`${baseUrl}invoice/items/add`, { method: 'POST', body: formData });
@@ -261,7 +316,8 @@ document.getElementById('pmAddItemForm').addEventListener('submit', async functi
     }
 
     this.reset();
-    this.querySelector('[name="quantity"]').value = 1;
+    document.getElementById('pmCustomDescWrap').classList.add('d-none');
+    document.getElementById('pmUnitPrice').removeAttribute('readonly');
 
     const invoiceId = document.getElementById('pmItemInvoiceId').value;
     await refreshInvoiceModal(invoiceId);

@@ -115,3 +115,7 @@ $routes->group('master', ['filter' => 'auth:super_admin,admin'], function ($rout
         $routes->get('export-excel/(:segment)', 'ReportController::exportExcel/$1');
         $routes->get('export-pdf/(:segment)', 'ReportController::exportPdf/$1');
 });
+    $routes->group('settings', ['filter' => 'auth:super_admin'], function ($routes) {
+        $routes->get('/', 'SettingController::index');
+        $routes->post('update', 'SettingController::update');
+});

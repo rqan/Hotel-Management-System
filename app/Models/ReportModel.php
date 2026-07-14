@@ -6,7 +6,7 @@ use CodeIgniter\Model;
 
 class ReportModel extends Model
 {
-    protected $table = 'reservations'; // default, sebagian besar method override tabel sendiri
+    protected $table = 'reservations';
 
     // ==========================================================
     // LAPORAN PENDAPATAN
@@ -120,23 +120,50 @@ class ReportModel extends Model
     }
 
     // ==========================================================
-    // LAPORAN KAMAR (okupansi)
+    // LAPORAN KAMAR (okupansi) — REFACTORED, tanpa string interpolation
     // ==========================================================
 
+    /**
+     * Sebelumnya method ini menyisipkan $startDate/$endDate langsung ke
+     * string kondisi JOIN (berpotensi SQL Injection kalau validasi controller
+     * lolos). Sekarang direfactor: reservasi dalam rentang tanggal diambil
+     * dulu lewat query builder biasa (fully parameterized), lalu diagregasi
+     * di PHP. Query tambahan, tapi 100% bebas dari string interpolation.
+     */
     public function roomOccupancyReport(string $startDate, string $endDate): array
     {
-        // Untuk setiap kamar, hitung berapa malam terisi dalam rentang tanggal
-        // (berdasarkan reservasi yang statusnya checked_in atau checked_out).
-        return $this->db->table('rooms rm')
-            ->select("rm.room_number, rt.name as room_type_name,
-                      COUNT(DISTINCT r.id) as total_reservations,
-                      COALESCE(SUM(r.nights), 0) as total_nights_booked")
+        // Ambil semua kamar sebagai baseline (termasuk yang tidak ada reservasi)
+        $rooms = $this->db->table('rooms rm')
+            ->select('rm.id, rm.room_number, rt.name as room_type_name')
             ->join('room_types rt', 'rt.id = rm.room_type_id')
-            ->join('reservations r', "r.room_id = rm.id AND r.status IN ('checked_in','checked_out') AND r.check_in_date >= '{$startDate}' AND r.check_in_date <= '{$endDate}'", 'left')
-            ->groupBy('rm.id')
             ->orderBy('rm.room_number', 'ASC')
             ->get()
             ->getResultArray();
+
+        // Ambil agregat reservasi per kamar dalam rentang tanggal — fully parameterized
+        $reservationStats = $this->db->table('reservations')
+            ->select('room_id, COUNT(id) as total_reservations, SUM(nights) as total_nights_booked')
+            ->whereIn('status', ['checked_in', 'checked_out'])
+            ->where('check_in_date >=', $startDate)
+            ->where('check_in_date <=', $endDate)
+            ->groupBy('room_id')
+            ->get()
+            ->getResultArray();
+
+        // Index stats by room_id untuk lookup cepat
+        $statsByRoom = [];
+        foreach ($reservationStats as $stat) {
+            $statsByRoom[$stat['room_id']] = $stat;
+        }
+
+        // Gabungkan: kamar tanpa reservasi tetap muncul dengan nilai 0
+        foreach ($rooms as &$room) {
+            $stat = $statsByRoom[$room['id']] ?? null;
+            $room['total_reservations']   = $stat['total_reservations'] ?? 0;
+            $room['total_nights_booked']  = $stat['total_nights_booked'] ?? 0;
+        }
+
+        return $rooms;
     }
 
     public function currentRoomStatusSummary(): array
@@ -149,21 +176,70 @@ class ReportModel extends Model
     }
 
     // ==========================================================
-    // LAPORAN CUSTOMER
+    // LAPORAN CUSTOMER — REFACTORED, tanpa string interpolation
     // ==========================================================
 
+    /**
+     * Sama seperti roomOccupancyReport() — direfactor dari JOIN kondisional
+     * dengan string interpolation menjadi 2 query terpisah yang digabung di PHP.
+     */
     public function customerReport(string $startDate, string $endDate): array
     {
-        return $this->db->table('customers c')
-            ->select("c.name, c.phone, c.email,
-                      COUNT(DISTINCT r.id) as total_reservations,
-                      COALESCE(SUM(CASE WHEN r.status = 'checked_out' THEN i.total_amount ELSE 0 END), 0) as total_spent")
-            ->join('reservations r', "r.customer_id = c.id AND r.booking_date >= '{$startDate}' AND r.booking_date <= '{$endDate}'", 'left')
-            ->join('invoices i', 'i.reservation_id = r.id', 'left')
-            ->groupBy('c.id')
-            ->having('total_reservations >', 0)
-            ->orderBy('total_spent', 'DESC')
+        // Reservasi dalam rentang tanggal, per customer
+        $reservationStats = $this->db->table('reservations')
+            ->select('customer_id, id as reservation_id, status')
+            ->where('booking_date >=', $startDate)
+            ->where('booking_date <=', $endDate)
             ->get()
             ->getResultArray();
+
+        if (empty($reservationStats)) {
+            return [];
+        }
+
+        $customerIds    = array_unique(array_column($reservationStats, 'customer_id'));
+        $reservationIds = array_column($reservationStats, 'reservation_id');
+
+        // Total spending dari invoice yang reservation_id-nya ada di daftar di atas
+        $invoiceTotals = $this->db->table('invoices')
+            ->select('reservation_id, total_amount')
+            ->whereIn('reservation_id', $reservationIds)
+            ->get()
+            ->getResultArray();
+
+        $invoiceByReservation = array_column($invoiceTotals, 'total_amount', 'reservation_id');
+
+        // Data dasar customer
+        $customers = $this->db->table('customers')
+            ->select('id, name, phone, email')
+            ->whereIn('id', $customerIds)
+            ->get()
+            ->getResultArray();
+
+        // Agregasi manual per customer
+        $result = [];
+        foreach ($customers as $customer) {
+            $customerReservations = array_filter($reservationStats, fn($r) => $r['customer_id'] == $customer['id']);
+
+            $totalSpent = 0;
+            foreach ($customerReservations as $res) {
+                if ($res['status'] === 'checked_out' && isset($invoiceByReservation[$res['reservation_id']])) {
+                    $totalSpent += (float) $invoiceByReservation[$res['reservation_id']];
+                }
+            }
+
+            $result[] = [
+                'name'               => $customer['name'],
+                'phone'              => $customer['phone'],
+                'email'              => $customer['email'],
+                'total_reservations' => count($customerReservations),
+                'total_spent'        => $totalSpent,
+            ];
+        }
+
+        // Urutkan berdasarkan total_spent tertinggi, konsisten dengan versi sebelumnya
+        usort($result, fn($a, $b) => $b['total_spent'] <=> $a['total_spent']);
+
+        return $result;
     }
 }

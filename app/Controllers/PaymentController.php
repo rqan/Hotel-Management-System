@@ -20,13 +20,12 @@ class PaymentController extends BaseController
 
     public function index()
     {
-        return view('payment/index', ['title' => 'Pembayaran']);
+        return view('payment/index', [
+            'title'           => 'Pembayaran',
+            'additionalItems' => \Config\AdditionalItems::$items,
+        ]);
     }
 
-    /**
-     * Daftar invoice yang belum lunas (unpaid/partial), untuk ditampilkan
-     * sebagai daftar utama yang bisa diklik staff untuk input pembayaran.
-     */
     public function unpaidList()
     {
         $data = $this->invoiceModel->db->table('invoices i')
@@ -39,19 +38,15 @@ class PaymentController extends BaseController
             ->get()
             ->getResultArray();
 
-        // Tambahkan info sisa tagihan per invoice
         foreach ($data as &$invoice) {
             $totalPaid = $this->paymentModel->getTotalPaidByInvoice($invoice['id']);
-            $invoice['total_paid']   = $totalPaid;
-            $invoice['remaining']    = $invoice['total_amount'] - $totalPaid;
+            $invoice['total_paid'] = $totalPaid;
+            $invoice['remaining']  = $invoice['total_amount'] - $totalPaid;
         }
 
         return $this->response->setJSON(['data' => $data]);
     }
 
-    /**
-     * Detail invoice + riwayat pembayaran (dipanggil saat modal dibuka).
-     */
     public function detail($invoiceId)
     {
         $invoice = $this->invoiceModel->find($invoiceId);
@@ -62,8 +57,8 @@ class PaymentController extends BaseController
         $totalPaid = $this->paymentModel->getTotalPaidByInvoice((int) $invoiceId);
 
         return $this->response->setJSON([
-            'invoice'  => $invoice,
-            'payments' => $this->paymentModel->getByInvoiceId((int) $invoiceId),
+            'invoice'    => $invoice,
+            'payments'   => $this->paymentModel->getByInvoiceId((int) $invoiceId),
             'total_paid' => $totalPaid,
             'remaining'  => $invoice['total_amount'] - $totalPaid,
         ]);
@@ -92,8 +87,6 @@ class PaymentController extends BaseController
         $totalPaid = $this->paymentModel->getTotalPaidByInvoice($invoiceId);
         $remaining = $invoice['total_amount'] - $totalPaid;
 
-        // Validasi: tidak boleh bayar lebih dari sisa tagihan.
-        // Ini mencegah overpayment yang tidak sengaja (typo nominal, dsb).
         if ($amount > $remaining) {
             return $this->response->setStatusCode(422)->setJSON([
                 'errors' => ['amount' => 'Jumlah pembayaran melebihi sisa tagihan (Rp ' . number_format($remaining, 0, ',', '.') . ').'],
@@ -104,18 +97,17 @@ class PaymentController extends BaseController
         $db->transStart();
 
         $this->paymentModel->insert([
-            'invoice_id'        => $invoiceId,
-            'payment_number'    => $this->paymentModel->generatePaymentNumber(),
-            'method'            => $this->request->getPost('method'),
-            'amount'            => $amount,
-            'status'            => 'paid', // Pembayaran yang diinput staff langsung dianggap lunas saat itu juga
-            'reference_number'  => $this->request->getPost('reference_number'),
-            'paid_at'           => Time::now()->toDateTimeString(),
-            'notes'             => $this->request->getPost('notes'),
-            'created_by'        => session()->get('userId'),
+            'invoice_id'       => $invoiceId,
+            'payment_number'   => $this->paymentModel->generatePaymentNumber(),
+            'method'           => $this->request->getPost('method'),
+            'amount'           => $amount,
+            'status'           => 'paid',
+            'reference_number' => $this->request->getPost('reference_number'),
+            'paid_at'          => Time::now()->toDateTimeString(),
+            'notes'            => $this->request->getPost('notes'),
+            'created_by'       => session()->get('userId'),
         ]);
 
-        // Hitung ulang status invoice berdasarkan total pembayaran terbaru
         $newTotalPaid = $totalPaid + $amount;
         $newStatus = $this->determineInvoiceStatus($newTotalPaid, $invoice['total_amount']);
 
@@ -137,10 +129,6 @@ class PaymentController extends BaseController
         ]);
     }
 
-    /**
-     * Tentukan status invoice berdasarkan perbandingan total dibayar vs total tagihan.
-     * Dipusatkan di satu method agar konsisten setiap kali dipanggil.
-     */
     private function determineInvoiceStatus(float $totalPaid, float $totalAmount): string
     {
         if ($totalPaid <= 0) {

@@ -119,6 +119,9 @@ class CheckOutController extends BaseController
         // 5. Room charge dimasukkan sebagai item pertama invoice (bukan lagi
         // field terpisah), supaya konsisten dengan item tambahan lain
         // (extra pillow, late checkout, dll) yang bisa ditambah dari Tahap 9.
+        // 5. Room charge dimasukkan sebagai item pertama invoice (bukan lagi
+        // field terpisah), supaya konsisten dengan item tambahan lain
+        // (extra pillow, late checkout, dll) yang bisa ditambah dari Tahap 9.
         $this->invoiceItemModel->insert([
             'invoice_id'  => $invoiceId,
             'description' => "{$reservation['room_type_name']} - Kamar {$reservation['room_number']} ({$reservation['nights']} malam)",
@@ -128,6 +131,30 @@ class CheckOutController extends BaseController
             'created_by'  => session()->get('userId'),
             'created_at'  => Time::now()->toDateTimeString(),
         ]);
+
+        // 6. Diskon referal (jika ada) — direalisasikan sebagai item bernilai
+        // negatif, bukan field terpisah, supaya total invoice tetap konsisten
+        // = SUM(invoice_items) tanpa pengecualian.
+        // Pakai skipValidation karena aturan model mewajibkan unit_price > 0,
+        // sementara ini sengaja negatif (validasi normal tidak berlaku di sini
+        // karena datanya dari sistem, bukan input form pengguna).
+        if (!empty($reservation['discount_amount']) && $reservation['discount_amount'] > 0) {
+            $this->invoiceItemModel->skipValidation(true)->insert([
+                'invoice_id'  => $invoiceId,
+                'description' => "Diskon Referal ({$reservation['referral_code']})",
+                'quantity'    => 1,
+                'unit_price'  => -$reservation['discount_amount'],
+                'amount'      => -$reservation['discount_amount'],
+                'created_by'  => session()->get('userId'),
+                'created_at'  => Time::now()->toDateTimeString(),
+            ]);
+        }
+
+        // 7. Hitung ulang total invoice (subtotal, pajak, service charge)
+        // berdasarkan SEMUA item yang baru diinsert, termasuk diskon di atas.
+        // Ini menggantikan nilai awal dari calculateCost() yang belum
+        // memperhitungkan diskon referal.
+        $this->invoiceModel->recalculateTotals($invoiceId);
 
         $db->transComplete();
 

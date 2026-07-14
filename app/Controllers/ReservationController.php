@@ -95,13 +95,23 @@ class ReservationController extends BaseController
             ]);
         }
 
+        // Bungkus transaksi + row lock, konsisten dengan pola selfBooking() di
+        // bawah — mencegah race condition kalau 2 staff input reservasi untuk
+        // kamar yang sama secara nyaris bersamaan.
+        $db = \Config\Database::connect();
+        $db->transStart();
+
+        $db->query('SELECT id FROM rooms WHERE id = ? FOR UPDATE', [$roomId]);
+
         if ($this->reservationModel->isRoomBooked($roomId, $checkIn, $checkOut)) {
+            $db->transComplete();
             return $this->response->setStatusCode(409)->setJSON([
                 'message' => 'Kamar sudah dibooking pada rentang tanggal tersebut.',
             ]);
         }
 
         $nights = (strtotime($checkOut) - strtotime($checkIn)) / 86400;
+        $status = $this->request->getPost('status') ?: 'pending';
 
         $reservationId = $this->reservationModel->insert([
             'booking_number' => $this->reservationModel->generateBookingNumber(),
@@ -112,15 +122,22 @@ class ReservationController extends BaseController
             'check_out_date' => $checkOut,
             'nights'         => $nights,
             'guests'         => $this->request->getPost('guests'),
-            'status'         => $this->request->getPost('status') ?: 'pending',
+            'status'         => $status,
             'notes'          => $this->request->getPost('notes'),
             'created_by'     => session()->get('userId'),
         ]);
 
         // Set status kamar jadi 'reserved' jika reservasi langsung confirmed
-        $status = $this->request->getPost('status') ?: 'pending';
         if ($status === 'confirmed') {
             $this->roomModel->update($roomId, ['status' => 'reserved']);
+        }
+
+        $db->transComplete();
+
+        if ($db->transStatus() === false) {
+            return $this->response->setStatusCode(500)->setJSON([
+                'message' => 'Terjadi kesalahan saat memproses reservasi. Silakan coba lagi.',
+            ]);
         }
 
         $this->logActivity('reservation', 'create', $reservationId, 'Membuat reservasi baru (staff)');
@@ -145,9 +162,6 @@ class ReservationController extends BaseController
         $userId = session()->get('userId');
         $customer = $this->customerModel->findByUserId($userId);
 
-        // Guard: user role customer tapi belum punya baris di tabel customers
-        // (kasus ini seharusnya jarang terjadi jika registrasi customer sudah benar,
-        // tapi tetap ditangani agar tidak fatal error).
         if (!$customer) {
             return $this->response->setStatusCode(422)->setJSON([
                 'message' => 'Data profil customer Anda belum lengkap. Silakan hubungi resepsionis.',
@@ -180,39 +194,73 @@ class ReservationController extends BaseController
             ]);
         }
 
+        // Validasi kode referal dilakukan SEBELUM transaksi dimulai (murni
+        // validasi string, tidak butuh row locking).
+        $referralInput  = trim((string) $this->request->getPost('referral_code'));
+        $referralCode   = null;
+        $discountAmount = 0;
+
+        if ($referralInput !== '') {
+            if (strtoupper($referralInput) === 'DEWA') {
+                $referralCode   = 'DEWA';
+                $discountAmount = 50000;
+            } else {
+                return $this->response->setStatusCode(422)->setJSON([
+                    'errors' => ['referral_code' => 'Kode referal tidak valid.'],
+                ]);
+            }
+        }
+
         $roomTypeId = (int) $this->request->getPost('room_type_id');
+        $nights     = (strtotime($checkOut) - strtotime($checkIn)) / 86400;
+
+        // Seluruh proses cari-kamar + insert dibungkus transaksi agar row lock
+        // dari FOR UPDATE di findAvailableRoomByType() efektif mencegah race
+        // condition — lock baru lepas setelah insert selesai (commit/rollback).
+        $db = \Config\Database::connect();
+        $db->transStart();
+
         $room = $this->reservationModel->findAvailableRoomByType($roomTypeId, $checkIn, $checkOut);
 
         if (!$room) {
+            $db->transComplete();
             return $this->response->setStatusCode(409)->setJSON([
                 'message' => 'Maaf, tidak ada kamar tersedia untuk tipe dan tanggal yang dipilih.',
             ]);
         }
 
-        $nights = (strtotime($checkOut) - strtotime($checkIn)) / 86400;
-
-        // customer_id & status TIDAK diambil dari input — dipaksa dari session
-        // dan default 'pending', mencegah manipulasi client-side.
         $reservationId = $this->reservationModel->insert([
-            'booking_number' => $this->reservationModel->generateBookingNumber(),
-            'customer_id'    => $customer['id'],
-            'room_id'        => $room['id'],
-            'booking_date'   => date('Y-m-d'),
-            'check_in_date'  => $checkIn,
-            'check_out_date' => $checkOut,
-            'nights'         => $nights,
-            'guests'         => $this->request->getPost('guests'),
-            'status'         => 'pending',
-            'notes'          => $this->request->getPost('notes'),
-            'created_by'     => $userId,
+            'booking_number'   => $this->reservationModel->generateBookingNumber(),
+            'customer_id'      => $customer['id'],
+            'room_id'          => $room['id'],
+            'booking_date'     => date('Y-m-d'),
+            'check_in_date'    => $checkIn,
+            'check_out_date'   => $checkOut,
+            'nights'           => $nights,
+            'guests'           => $this->request->getPost('guests'),
+            'status'           => 'pending',
+            'notes'            => $this->request->getPost('notes'),
+            'referral_code'    => $referralCode,
+            'discount_amount'  => $discountAmount,
+            'created_by'       => $userId,
         ]);
 
-        $this->logActivity('reservation', 'create', $reservationId, 'Customer melakukan self-booking');
+        $db->transComplete();
 
-        return $this->response->setJSON([
-            'success' => true,
-            'message' => 'Reservasi berhasil dibuat! Menunggu konfirmasi dari staff.',
-        ]);
+        if ($db->transStatus() === false) {
+            return $this->response->setStatusCode(500)->setJSON([
+                'message' => 'Terjadi kesalahan saat memproses reservasi. Silakan coba lagi.',
+            ]);
+        }
+
+        $this->logActivity('reservation', 'create', $reservationId, 'Customer melakukan self-booking' . ($referralCode ? " (referal: {$referralCode})" : ''));
+
+        $message = 'Reservasi berhasil dibuat! Menunggu konfirmasi dari staff.';
+        if ($discountAmount > 0) {
+            $message .= ' Diskon referal Rp ' . number_format($discountAmount, 0, ',', '.') . ' akan diterapkan saat check-out.';
+        }
+
+        return $this->response->setJSON(['success' => true, 'message' => $message]);
     }
 
     // ==========================================================
