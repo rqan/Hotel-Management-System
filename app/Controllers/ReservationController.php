@@ -167,6 +167,21 @@ class ReservationController extends BaseController
                 'message' => 'Data profil customer Anda belum lengkap. Silakan hubungi resepsionis.',
             ]);
         }
+        if (!$customer) {
+            return $this->response->setStatusCode(422)->setJSON([
+                'message' => 'Data profil customer Anda belum lengkap. Silakan hubungi resepsionis.',
+            ]);
+        }
+
+        // Guard anti-spam: batasi maksimal 3 reservasi pending aktif per
+        // customer. Mencegah "booking troll" yang spam banyak reservasi
+        // tanpa niat serius (menyandera ketersediaan kamar untuk tamu lain).
+        $pendingCount = $this->reservationModel->countPendingByCustomer($customer['id']);
+        if ($pendingCount >= 3) {
+            return $this->response->setStatusCode(429)->setJSON([
+                'message' => 'Anda memiliki terlalu banyak reservasi yang belum dikonfirmasi (maks. 3). Selesaikan atau batalkan salah satunya terlebih dahulu.',
+            ]);
+        }
 
         $rules = [
             'room_type_id'   => 'required|integer|is_not_unique[room_types.id]',

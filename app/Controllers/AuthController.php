@@ -167,6 +167,103 @@ class AuthController extends BaseController
             ->with('success', 'Link reset password berhasil dibuat (mode development, belum ada SMTP):')
             ->with('reset_link', $resetLink);
     }
+    // ==========================================================
+    // REGISTER (Customer self-registration)
+    // ==========================================================
+
+    public function registerForm()
+    {
+        if (session()->get('isLoggedIn')) {
+            return redirect()->to('/dashboard');
+        }
+
+        return view('auth/register');
+    }
+
+    public function register()
+    {
+        $rules = [
+            'name'             => 'required|min_length[3]|max_length[100]',
+            'email'            => 'required|valid_email|is_unique[users.email]',
+            'phone'            => 'required|max_length[20]',
+            'password'         => 'required|min_length[8]',
+            'password_confirm' => 'required|matches[password]',
+        ];
+
+        $messages = [
+            'email' => [
+                'is_unique' => 'Email ini sudah terdaftar. Silakan login atau gunakan email lain.',
+            ],
+            'password_confirm' => [
+                'matches' => 'Konfirmasi password tidak sama.',
+            ],
+        ];
+
+        if (!$this->validate($rules, $messages)) {
+            return redirect()->back()
+                ->withInput()
+                ->with('errors', $this->validator->getErrors());
+        }
+
+        // Ambil role_id untuk 'customer' — hardcode nama role, bukan hardcode
+        // angka id, supaya tidak rapuh kalau urutan seeder role berubah.
+        $roleModel = new \App\Models\RoleModel();
+        $customerRole = $roleModel->where('name', \Config\Roles::CUSTOMER)->first();
+
+        if (!$customerRole) {
+            // Kondisi ini seharusnya tidak pernah terjadi kecuali RoleSeeder
+            // belum pernah dijalankan — dijaga agar tidak fatal error, tapi
+            // beri pesan jelas untuk debugging.
+            return redirect()->back()
+                ->withInput()
+                ->with('error', 'Registrasi gagal: konfigurasi role belum lengkap. Hubungi admin.');
+        }
+
+        $db = \Config\Database::connect();
+        $db->transStart();
+
+        $userId = $this->userModel->insert([
+            'role_id'   => $customerRole['id'],
+            'name'      => $this->request->getPost('name'),
+            'email'     => $this->request->getPost('email'),
+            'phone'     => $this->request->getPost('phone'),
+            'password'  => $this->request->getPost('password'), // otomatis di-hash oleh UserEntity::setPassword()
+            'is_active' => 1,
+        ]);
+
+        $customerModel = new \App\Models\CustomerModel();
+        $customerModel->insert([
+            'user_id' => $userId,
+            'name'    => $this->request->getPost('name'),
+            'phone'   => $this->request->getPost('phone'),
+            'email'   => $this->request->getPost('email'),
+        ]);
+
+        $db->transComplete();
+
+        if ($db->transStatus() === false) {
+            return redirect()->back()
+                ->withInput()
+                ->with('error', 'Terjadi kesalahan saat mendaftar. Silakan coba lagi.');
+        }
+
+        // Auto-login setelah registrasi sukses, supaya customer tidak perlu
+        // mengetik ulang kredensial yang baru saja mereka buat.
+        $userWithRole = $this->userModel->getWithRole($userId);
+
+        session()->set([
+            'userId'     => $userId,
+            'userName'   => $this->request->getPost('name'),
+            'userEmail'  => $this->request->getPost('email'),
+            'roleId'     => $customerRole['id'],
+            'roleName'   => $userWithRole['role_name'],
+            'isLoggedIn' => true,
+        ]);
+
+        $this->userModel->update($userId, ['last_login_at' => \CodeIgniter\I18n\Time::now()->toDateTimeString()]);
+
+        return redirect()->to('/dashboard')->with('success', 'Registrasi berhasil! Selamat datang, ' . $this->request->getPost('name') . '.');
+    }
 
     // ==========================================================
     // RESET PASSWORD

@@ -52,8 +52,37 @@ class UserSeeder extends Seeder
                 'created_at' => date('Y-m-d H:i:s'),
                 'updated_at' => date('Y-m-d H:i:s'),
             ],
+            [
+                'role_id'    => $roleMap['customer'],
+                'name'       => 'Budi Customer',
+                'email'      => 'budi@customer.test',
+                'phone'      => '081234567890',
+                'password'   => password_hash('password123', PASSWORD_DEFAULT),
+                'is_active'  => 1,
+                'created_at' => date('Y-m-d H:i:s'),
+                'updated_at' => date('Y-m-d H:i:s'),
+            ],
         ];
 
         $this->db->table('users')->insertBatch($data);
+
+        // Ambil ulang user_id dari akun customer yang baru diinsert, lalu buat
+        // baris terkait di tabel customers — wajib ada agar akun ini bisa
+        // langsung dipakai untuk self-booking tanpa langkah manual tambahan
+        // (lihat guard di ReservationController::selfBooking(), Tahap 6).
+        $customerUser = $this->db->table('users')
+            ->where('email', 'budi@customer.test')
+            ->get()
+            ->getRowArray();
+
+        if ($customerUser) {
+            $this->db->table('customers')->insert([
+                'user_id'    => $customerUser['id'],
+                'name'       => 'Budi Customer',
+                'phone'      => '081234567890',
+                'created_at' => date('Y-m-d H:i:s'),
+                'updated_at' => date('Y-m-d H:i:s'),
+            ]);
+        }
     }
 }

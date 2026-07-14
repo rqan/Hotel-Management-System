@@ -71,6 +71,10 @@ $roleName = session()->get('roleName');
                     <div class="text-center mt-3">
                         <a href="<?= base_url('forgot-password') ?>" class="small">Lupa password?</a>
                     </div>
+                    <hr>
+                    <div class="text-center">
+                        Belum punya akun? <a href="<?= base_url('register') ?>">Daftar di sini</a>
+                    </div>
                 </form>
             </div>
         </div>

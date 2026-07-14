@@ -114,4 +114,16 @@ class ReservationModel extends Model
             ->where('reservations.id', $id)
             ->first();
     }
+    /**
+     * Hitung berapa banyak reservasi berstatus 'pending' yang dimiliki
+     * satu customer saat ini. Dipakai untuk mencegah "booking troll" —
+     * spam banyak reservasi pending tanpa niat serius, yang bisa
+     * menghalangi ketersediaan kamar untuk tamu lain.
+     */
+    public function countPendingByCustomer(int $customerId): int
+    {
+        return $this->where('customer_id', $customerId)
+            ->where('status', 'pending')
+            ->countAllResults();
+    }
 }
