@@ -115,15 +115,16 @@ class ReservationModel extends Model
             ->first();
     }
     /**
-     * Hitung berapa banyak reservasi berstatus 'pending' yang dimiliki
-     * satu customer saat ini. Dipakai untuk mencegah "booking troll" —
-     * spam banyak reservasi pending tanpa niat serius, yang bisa
-     * menghalangi ketersediaan kamar untuk tamu lain.
+     * Hitung berapa banyak reservasi AKTIF (pending, confirmed, checked_in)
+     * yang dimiliki satu customer saat ini. Dipakai untuk membatasi
+     * self-booking customer hanya 1 kamar dalam satu waktu — kalau butuh
+     * lebih dari 1 kamar, customer diarahkan menghubungi resepsionis
+     * (yang tidak terikat batasan ini karena punya alur booking terpisah).
      */
-    public function countPendingByCustomer(int $customerId): int
+    public function countActiveByCustomer(int $customerId): int
     {
         return $this->where('customer_id', $customerId)
-            ->where('status', 'pending')
+            ->whereIn('status', ['pending', 'confirmed', 'checked_in'])
             ->countAllResults();
     }
 }

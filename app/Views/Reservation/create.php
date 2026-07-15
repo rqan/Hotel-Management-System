@@ -7,6 +7,12 @@
             <div class="card-body p-4">
                 <h5 class="mb-3">Buat Reservasi Baru</h5>
 
+                <div class="alert alert-info small">
+                    <i class="bi bi-info-circle"></i>
+                    Booking mandiri dibatasi <strong>1 kamar per akun</strong>. Jika Anda memerlukan lebih dari 1 kamar,
+                    silakan hubungi resepsionis kami secara langsung untuk dibantu prosesnya.
+                </div>
+
                 <form id="selfBookingForm">
                     <div class="mb-3">
                         <label class="form-label">Tipe Kamar</label>
@@ -42,7 +48,7 @@
                     </div>
                     <div class="mb-3">
                         <label class="form-label">Kode Referal (opsional)</label>
-                        <input type="text" class="form-control" name="referral_code" placeholder="mis. DEWA" style="text-transform: uppercase;">
+                        <input type="text" class="form-control" name="referral_code" placeholder="Kode Referral" style="text-transform: uppercase;">
                         <div class="invalid-feedback" id="err_referral_code"></div>
                         <small class="text-muted">Punya kode referal? Dapatkan potongan Rp 50.000 (diterapkan saat check-out).</small>
                     </div>

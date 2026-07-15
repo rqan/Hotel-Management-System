@@ -173,13 +173,14 @@ class ReservationController extends BaseController
             ]);
         }
 
-        // Guard anti-spam: batasi maksimal 3 reservasi pending aktif per
-        // customer. Mencegah "booking troll" yang spam banyak reservasi
-        // tanpa niat serius (menyandera ketersediaan kamar untuk tamu lain).
-        $pendingCount = $this->reservationModel->countPendingByCustomer($customer['id']);
-        if ($pendingCount >= 3) {
-            return $this->response->setStatusCode(429)->setJSON([
-                'message' => 'Anda memiliki terlalu banyak reservasi yang belum dikonfirmasi (maks. 3). Selesaikan atau batalkan salah satunya terlebih dahulu.',
+        // Guard: akun customer hanya boleh memiliki 1 kamar aktif dalam satu
+        // waktu (pending/confirmed/checked_in). Untuk kebutuhan lebih dari
+        // 1 kamar, customer diarahkan menghubungi resepsionis secara langsung
+        // — sekaligus berfungsi sebagai proteksi anti-spam/booking-troll.
+        $activeCount = $this->reservationModel->countActiveByCustomer($customer['id']);
+        if ($activeCount >= 1) {
+            return $this->response->setStatusCode(409)->setJSON([
+                'message' => 'Anda sudah memiliki 1 reservasi aktif. Booking mandiri dibatasi 1 kamar per akun. Untuk memesan kamar tambahan, silakan hubungi resepsionis kami.',
             ]);
         }
 

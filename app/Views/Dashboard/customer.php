@@ -4,12 +4,22 @@
 
 <div class="card shadow-sm mb-3">
     <div class="card-body">
-        <h5>Selamat datang, <?= esc($name) ?> 👋</h5>
+        <?php
+            $displayName = 'Tamu';
+            if (isset($name)) {
+                if (is_string($name) || (is_object($name) && method_exists($name, '__toString'))) {
+                    $displayName = $name;
+                } elseif (is_array($name)) {
+                    $displayName = $name['name'] ?? $name['full_name'] ?? $name['username'] ?? $name['nama'] ?? 'Tamu';
+                }
+            }
+        ?>
+        <h5>Selamat datang, <?= esc($displayName) ?> 👋</h5>
         <p class="text-muted mb-0">Berikut ringkasan booking Anda.</p>
     </div>
 </div>
 
-<?php if (!$hasCustomerProfile): ?>
+<?php if (!isset($hasCustomerProfile) || !$hasCustomerProfile): ?>
     <div class="alert alert-info">
         <i class="bi bi-info-circle"></i>
         Anda belum memiliki riwayat booking. Silakan lakukan reservasi pertama Anda.
@@ -26,6 +36,14 @@
             </div>
         </div>
     </div>
+
+    <?php if ($activeCount >= 1): ?>
+        <div class="alert alert-warning small">
+            <i class="bi bi-exclamation-triangle"></i>
+            Anda sudah memiliki reservasi aktif. Booking mandiri dibatasi 1 kamar per akun —
+            untuk kamar tambahan, silakan hubungi resepsionis kami.
+        </div>
+    <?php endif; ?>
 
     <div class="card shadow-sm">
         <div class="card-body">

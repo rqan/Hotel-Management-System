@@ -8,6 +8,7 @@ use PhpOffice\PhpSpreadsheet\Spreadsheet;
 use PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 use Dompdf\Dompdf;
 use Dompdf\Options;
+use PhpOffice\PhpSpreadsheet\Cell\Coordinate;
 
 class ReportController extends BaseController
 {
@@ -84,23 +85,26 @@ class ReportController extends BaseController
 
         $spreadsheet = new Spreadsheet();
         $sheet = $spreadsheet->getActiveSheet();
-        $sheet->setTitle(substr($config['title'], 0, 31)); // Excel batasi max 31 char
+        $sheet->setTitle(substr($config['title'], 0, 31));
+
+        $lastColumnLetter = Coordinate::stringFromColumnIndex(count($config['headers']));
 
         // Header judul
         $sheet->setCellValue('A1', $config['title']);
-        $sheet->mergeCells('A1:' . $this->columnLetter(count($config['headers'])) . '1');
+        $sheet->mergeCells('A1:' . $lastColumnLetter . '1');
         $sheet->getStyle('A1')->getFont()->setBold(true)->setSize(14);
 
         $sheet->setCellValue('A2', "Periode: {$startDate} s/d {$endDate}");
-        $sheet->mergeCells('A2:' . $this->columnLetter(count($config['headers'])) . '2');
+        $sheet->mergeCells('A2:' . $lastColumnLetter . '2');
 
         // Header kolom (baris ke-4)
         $col = 1;
         foreach ($config['headers'] as $header) {
-            $sheet->setCellValueByColumnAndRow($col, 4, $header);
+            $columnLetter = Coordinate::stringFromColumnIndex($col);
+            $sheet->setCellValue($columnLetter . '4', $header);
             $col++;
         }
-        $sheet->getStyle('A4:' . $this->columnLetter(count($config['headers'])) . '4')
+        $sheet->getStyle('A4:' . $lastColumnLetter . '4')
             ->getFont()->setBold(true);
 
         // Data rows
@@ -108,15 +112,17 @@ class ReportController extends BaseController
         foreach ($config['rows'] as $row) {
             $col = 1;
             foreach ($config['mapper']($row) as $value) {
-                $sheet->setCellValueByColumnAndRow($col, $rowNum, $value);
+                $columnLetter = Coordinate::stringFromColumnIndex($col);
+                $sheet->setCellValue($columnLetter . $rowNum, $value);
                 $col++;
             }
             $rowNum++;
         }
 
         // Auto-size kolom
-        foreach (range('A', $this->columnLetter(count($config['headers']))) as $columnID) {
-            $sheet->getColumnDimension($columnID)->setAutoSize(true);
+        foreach (range(1, count($config['headers'])) as $colIndex) {
+            $columnLetter = Coordinate::stringFromColumnIndex($colIndex);
+            $sheet->getColumnDimension($columnLetter)->setAutoSize(true);
         }
 
         $filename = $config['filename'] . '_' . $startDate . '_to_' . $endDate . '.xlsx';
@@ -129,7 +135,6 @@ class ReportController extends BaseController
         $writer->save('php://output');
         exit;
     }
-
     // ==========================================================
     // EXPORT PDF
     // ==========================================================
