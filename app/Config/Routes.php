@@ -140,3 +140,19 @@ $routes->group('settings', ['filter' => 'auth:super_admin'], function ($routes) 
     $routes->get('/', 'SettingController::index');
     $routes->post('update', 'SettingController::update');
 });
+// ==========================================================
+// USER MANAGEMENT & ACTIVITY LOG — khusus super_admin
+// ==========================================================
+$routes->group('users', ['filter' => 'auth:super_admin'], function ($routes) {
+    $routes->get('/', 'UserController::index');
+    $routes->get('list', 'UserController::list');
+    $routes->post('create', 'UserController::create');
+    $routes->post('update/(:num)', 'UserController::update/$1');
+    $routes->post('toggle-active/(:num)', 'UserController::toggleActive/$1');
+    $routes->post('reset-password/(:num)', 'UserController::resetPassword/$1');
+});
+
+$routes->group('activity-logs', ['filter' => 'auth:super_admin'], function ($routes) {
+    $routes->get('/', 'ActivityLogController::index');
+    $routes->get('list', 'ActivityLogController::list');
+});
